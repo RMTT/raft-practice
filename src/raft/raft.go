@@ -348,6 +348,10 @@ func (rf *Raft) sendVote(p int) {
 		} else if reply.Term > rf.currentTerm {
 			rf.status = FOLLOWER
 		}
+
+		if rf.status == LEADER {
+			go rf.heartbeat()
+		}
 	}
 }
 
@@ -389,11 +393,8 @@ func (rf *Raft) sendBeat(server int) {
 	}
 }
 
-// The ticker go routine starts a new election if this peer hasn't received
-// heartsbeats recently.
-func (rf *Raft) ticker() {
-	fmt.Printf("[peer %d, currentTerm %d]: started!\n", rf.me, rf.currentTerm)
-	for rf.killed() == false {
+func (rf *Raft) heartbeat() {
+	for {
 		rf.mu.Lock()
 		if rf.status == LEADER {
 			rf.mu.Unlock()
@@ -402,24 +403,42 @@ func (rf *Raft) ticker() {
 					go rf.sendBeat(i)
 				}
 			}
-			time.Sleep(time.Duration(100 * 1000))
-			continue
+			time.Sleep(100 * time.Millisecond)
+		} else {
+			rf.mu.Unlock()
+			return
 		}
+	}
+}
+
+// The ticker go routine starts a new election if this peer hasn't received
+// heartsbeats recently.
+func (rf *Raft) ticker() {
+	fmt.Printf("[peer %d, currentTerm %d]: started!\n", rf.me, rf.currentTerm)
+	for rf.killed() == false {
 
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
 		// time.Sleep().
-		currentTime := time.Now().UnixMilli()
-		if currentTime-rf.lastBeatCheckTime >= int64(rf.beatTimeout) {
+		rf.mu.Lock()
+
+		if rf.status == LEADER {
 			rf.mu.Unlock()
-			// start elections
-			electionTimeout := rand.Intn(200) + 300
-			rf.election()
-			time.Sleep(time.Duration(electionTimeout * 1000))
-			fmt.Printf("[peer %d, currentTerm %d]: election finished\n", rf.me, rf.currentTerm)
+			time.Sleep(50 * time.Millisecond)
 		} else {
+			lastTime := rf.lastBeatCheckTime
+			timeout := rf.beatTimeout
 			rf.mu.Unlock()
-			time.Sleep(time.Duration(50 * 1000))
+			time.Sleep(time.Duration(timeout) * time.Millisecond)
+
+			rf.mu.Lock()
+			if rf.lastBeatCheckTime == lastTime {
+				rf.beatTimeout = rand.Intn(200) + 300
+				rf.mu.Unlock()
+				rf.election()
+			} else {
+				rf.mu.Unlock()
+			}
 		}
 	}
 }
